@@ -1,0 +1,117 @@
+version: "3"
+
+vars:
+  PODMAN: podman
+  IMAGE: localhost/stakeforge:dev
+  # Compose all `stakeforge` CLI args after the image name (ENTRYPOINT is stakeforge).
+
+tasks:
+  default:
+    desc: List tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the StakeForge OCI image (Podman)
+    dir: .
+    cmds:
+      - "{{.PODMAN}} build -t {{.IMAGE}} -f Containerfile ."
+    silent: false
+
+  verify:
+    desc: Run every quick verification check (eval suites + ingest/retrieve/build-prompt + eval extract)
+    dir: .
+    deps: [build]
+    cmds:
+      - task: verify:eval-sample
+      - task: verify:eval-full
+      - task: verify:e2e
+      - task: verify:eval-extract
+
+  verify:eval-sample:
+    desc: Quick verification — sample_cases.jsonl must average 1.0
+    dir: .
+    deps: [build]
+    cmds:
+      - |
+        {{.PODMAN}} run --rm \
+          -e STAKEFORGE_DOLT=off \
+          {{.IMAGE}} \
+          eval run \
+          --dataset examples/eval/sample_cases.jsonl \
+          --replies-dir examples/eval/replies \
+          --persona-base . \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('average_score',0)>=0.999, d; print('verify:eval-sample ok', d['average_score'])"
+
+  verify:eval-full:
+    desc: Quick verification — cases.full.jsonl (two cases) must average >= 0.85
+    dir: .
+    deps: [build]
+    cmds:
+      - |
+        {{.PODMAN}} run --rm \
+          -e STAKEFORGE_DOLT=off \
+          {{.IMAGE}} \
+          eval run \
+          --dataset examples/eval/cases.full.jsonl \
+          --replies-dir examples/eval/replies \
+          --persona-base . \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('average_score',0); assert s>=0.85, d; print('verify:eval-full ok', s)"
+
+  verify:e2e:
+    desc: Golden path inside container — init, ingest, retrieve, build-prompt
+    dir: .
+    deps: [build]
+    cmds:
+      - |
+        {{.PODMAN}} run --rm \
+          -e STAKEFORGE_DOLT=off \
+          --entrypoint /bin/sh \
+          {{.IMAGE}} \
+          -c 'set -eu
+          SFROOT=/tmp/stakeforge-ws
+          rm -rf "$$SFROOT"
+          stakeforge --root "$$SFROOT" init
+          stakeforge --root "$$SFROOT" ingest \
+            --stakeholder-id maria_chen \
+            --md-path examples/conversations/2026-03-kickoff-maria.md
+          stakeforge --root "$$SFROOT" retrieve \
+            --stakeholder-id maria_chen \
+            --query "ROI board checkpoint" \
+            --format md | grep -q "Evidence ID"
+          stakeforge --root "$$SFROOT" build-prompt \
+            --stakeholder-id maria_chen \
+            --persona-md examples/stakeholders/maria_chen.md \
+            --query "Can we promise ROI in six months for the board?" \
+            --out /tmp/maria_prompt.md
+          test -s /tmp/maria_prompt.md
+          grep -q "StakeForge Persona Prompt" /tmp/maria_prompt.md
+          grep -Fq "CITE[" /tmp/maria_prompt.md
+          echo verify:e2e ok'
+
+  verify:eval-extract:
+    desc: YAML front matter → JSONL (eval extract) inside container
+    dir: .
+    deps: [build]
+    cmds:
+      - |
+        {{.PODMAN}} run --rm \
+          -e STAKEFORGE_DOLT=off \
+          --entrypoint /bin/sh \
+          {{.IMAGE}} \
+          -c 'set -eu
+          rm -f /tmp/extracted.jsonl
+          stakeforge eval extract \
+            --notes examples/eval/interview_with_eval_frontmatter.md \
+            --out /tmp/extracted.jsonl
+          test -s /tmp/extracted.jsonl
+          test "$(grep -c . /tmp/extracted.jsonl)" -eq 1
+          grep -q maria-interview-roi /tmp/extracted.jsonl
+          echo verify:eval-extract ok'
+
+  shell:
+    desc: Interactive shell in the image (debug)
+    dir: .
+    deps: [build]
+    cmds:
+      - "{{.PODMAN}} run --rm -it -e STAKEFORGE_DOLT=off --entrypoint /bin/bash {{.IMAGE}} -l"

@@ -1,0 +1,34 @@
+[project]
+name = "stakeforge"
+version = "0.2.0"
+description = "StakeForge — RAG-enriched stakeholder personas (PageIndex + DuckDB FTS + Dolt)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "StakeForge contributors" }]
+
+dependencies = [
+  "duckdb>=1.1.0",
+  "pydantic>=2.6.0",
+  "PyYAML>=6.0.1",
+]
+
+[project.optional-dependencies]
+# PageIndex currently ships as a repo install; keep it optional to allow running without API keys.
+pageindex = [
+  "pageindex @ git+https://github.com/VectifyAI/PageIndex.git",
+]
+
+[project.scripts]
+stakeforge = "stakeforge.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
